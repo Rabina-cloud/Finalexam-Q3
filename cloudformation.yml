@@ -1,0 +1,121 @@
+Resources:
+  # IAM Role for Glue, Step Functions, SQS, SNS
+  GlueStepFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: GlueStepFunctionRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - glue.amazonaws.com
+                - states.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: GlueStepFunctionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - glue:StartJobRun
+                  - sqs:SendMessage
+                  - sns:Publish
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  # AWS Glue Job
+  GlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: SampleGlueJob
+      Role: !GetAtt GlueStepFunctionRole.Arn
+      Command:
+        Name: glueetl
+        ScriptLocation: "s3://your-script-bucket/glue-script.py"
+        PythonVersion: "3"
+      GlueVersion: "3.0"
+      MaxRetries: 0
+      Timeout: 10
+
+  # SQS Queue
+  SampleQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: SampleQueue
+
+  # SNS Topic
+  SampleTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: SampleTopic
+
+  # Step Function State Machine
+  SampleStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: SampleWorkflow
+      RoleArn: !GetAtt GlueStepFunctionRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Sample Step Function workflow",
+          "StartAt": "Start",
+          "States": {
+            "Start": {
+              "Type": "Pass",
+              "Next": "TriggerGlueJob"
+            },
+            "TriggerGlueJob": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "${GlueJob}"
+              },
+              "Next": "TriggerSQS"
+            },
+            "TriggerSQS": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::sqs:sendMessage",
+              "Parameters": {
+                "QueueUrl": "${SampleQueue}",
+                "MessageBody": "Hello from Step Function"
+              },
+              "Next": "TriggerSNS"
+            },
+            "TriggerSNS": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::sns:publish",
+              "Parameters": {
+                "TopicArn": "${SampleTopic}",
+                "Message": "Step Function workflow completed"
+              },
+              "Next": "Stop"
+            },
+            "Stop": {
+              "Type": "Pass",
+              "End": true
+            }
+          }
+        }
+
+Outputs:
+  GlueJobName:
+    Description: "Glue Job Name"
+    Value: !Ref GlueJob
+
+  SQSQueueURL:
+    Description: "SQS Queue URL"
+    Value: !Ref SampleQueue
+
+  SNSTopicArn:
+    Description: "SNS Topic ARN"
+    Value: !Ref SampleTopic
+
+  StepFunctionArn:
+    Description: "Step Function ARN"
+    Value: !Ref SampleStateMachine
